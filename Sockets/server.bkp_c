@@ -1,0 +1,142 @@
+/* References : 
+1. https://medium.com/@anamika.sanjay16/socket-programming-deep-dive-unix-domain-with-select-syscall-edea730448c6 
+2. https://jameshfisher.com/2017/04/05/set_socket_nonblocking/ */
+
+#include<stdio.h>
+#include<string.h>
+#include<sys/socket.h>
+#include<sys/un.h>
+#include<fcntl.h>
+#include<sys/ioctl.h> /* ioctl */
+#include <unistd.h> /* unlink */
+
+#define SERVER_PATH "/tmp/.hsl_async_cmd"
+#define PAL_SOCK_ERROR ((int)-1)
+int
+unix_domain_socket_server()
+{
+  int s_sock = -1, c_sock = -1;
+  struct sockaddr_un addr, peer_addr;
+  int len = 0;
+  socklen_t peer_addr_size;
+
+  int val, ret;
+  int arg;
+
+
+  /* Reset the sock addr */
+  memset(&addr, 0, sizeof(addr));
+
+  /* Create Server Socket */
+  s_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (s_sock == -1)
+  {
+    printf("s_sock creation failed\n");
+    return 0;
+  }
+
+/* Commented right now not required to unblock accept */
+#if 1
+  /* make accpet non-bloacking */
+  val = fcntl(s_sock, F_GETFL, 0);/* manipulate file descriptor */
+  if (PAL_SOCK_ERROR != val)
+  {
+    arg = val | O_NONBLOCK;
+    ret = fcntl(s_sock, F_SETFL, arg);
+#if 0
+    if (ret == EBADF
+         || ret == EFAULT
+         || ret == EINVAL
+         || ret == ENOTTY
+         || ret == ENOTTY)
+#endif /* if 0 */
+    if (ret < 0)
+    {
+      printf("error in ioctl %d\n", __LINE__);
+      return 0;
+    }
+  }
+#endif /* if 0 */
+  unlink(SERVER_PATH);
+  /* Name the server Socket */
+  addr.sun_family = AF_UNIX;
+  strncpy (addr.sun_path, SERVER_PATH, strlen (SERVER_PATH));
+  addr.sun_path[strlen(SERVER_PATH)] = '\0';
+  len = sizeof (addr.sun_family) + strlen (addr.sun_path);
+
+  /* Bind the socket */
+  if (bind(s_sock, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+    {
+      printf("bind creation failed\n");
+      return 0;
+    }
+
+  /* Listen for the clients */
+  if (listen(s_sock, 20) == -1)
+  {
+    printf("listen failed\n");
+    return 0;
+  }
+
+  for(;;)
+    {
+      /* Now we can accept incoming connections one at a time using accept(2) */
+      /* Accept the client connect */
+      peer_addr_size = sizeof(peer_addr);
+      c_sock = accept(s_sock, (struct sockaddr*)&peer_addr, &peer_addr_size);
+      if (c_sock == -1)
+        {
+          /* The <errno.h> header file defines the integer variable errno,
+             which is set by system calls and some library functions in the
+             event of an error to indicate what went wrong. */
+          /* This below logic is wirtten to handle when accept is non-blockig case */  
+          if (errno == EWOULDBLOCK)
+            {
+              printf("No pending connections; sleeping for one second.\n");
+              sleep(1);
+            }
+          else
+            {
+              printf("accept creation failed\n");
+              return 0;
+            }
+        }
+
+      val = 0;  ret = 0;
+      arg = 0;;
+
+      /* make accpet non-bloacking */
+      val = fcntl(c_sock, F_GETFL, 0);/* manipulate file descriptor */
+      if (PAL_SOCK_ERROR != val)
+        {
+          arg = val | O_NONBLOCK;
+          ret = fcntl(c_sock, F_SETFL, arg);
+#if 0
+          if (ret == EBADF
+              || ret == EFAULT
+              || ret == EINVAL
+              || ret == ENOTTY
+              || ret == ENOTTY)
+#endif /* if 0 */
+            if (ret < 1)
+              {
+                printf("error in ioctl\n");
+                return 0;
+              }
+        }
+    }
+
+  close(c_sock);
+  close(s_sock);
+  printf ("accept non blocking\n");
+
+  /* Read from the client socket */
+  return 0;
+}
+
+int main()
+{
+
+  unix_domain_socket_server();
+  return 0;
+}
